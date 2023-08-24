@@ -1,0 +1,9 @@
+
+__pycache__/
+weights/
+.vscode/
+logs/
+
+*.pyc
+*.pt
+*.pth
