@@ -179,11 +179,6 @@ class ResNet(nn.Module):
         self.regressionModel = RegressionModel(256)
         self.classificationModel = ClassificationModel(256, num_classes=num_classes)
 
-        self.anchors = Anchors()
-        self.regressBoxes = BBoxTransform()
-        self.clipBoxes = ClipBoxes()
-        self.focalLoss = losses.FocalLoss()
-
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -220,10 +215,7 @@ class ResNet(nn.Module):
                 layer.eval()
 
     def forward(self, inputs):
-
-        if self.training:   img_batch, annotations = inputs
-        else:               img_batch = inputs
-
+        img_batch = inputs
         x = self.conv1(img_batch)
         x = self.bn1(x)
         x = self.relu(x)
@@ -237,47 +229,7 @@ class ResNet(nn.Module):
         features = self.fpn([x2, x3, x4])
         regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
         classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
-        anchors = self.anchors(img_batch)
-
-        if self.training:
-            return self.focalLoss(classification, regression, anchors, annotations)
-        else:
-            transformed_anchors = self.regressBoxes(anchors, regression)
-            transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
-
-            finalResult = [[], [], []]
-            finalScores = torch.Tensor([])
-            finalAnchorBoxesIndexes = torch.Tensor([]).long()
-            finalAnchorBoxesCoordinates = torch.Tensor([])
-            if torch.cuda.is_available():
-                finalScores = finalScores.cuda()
-                finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
-                finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
-
-            for i in range(classification.shape[2]):
-                scores = torch.squeeze(classification[:, :, i])
-                scores_over_thresh = (scores > 0.05)
-                if scores_over_thresh.sum() == 0:
-                    # no boxes to NMS, just continue
-                    continue
-
-                scores = scores[scores_over_thresh]
-                anchorBoxes = torch.squeeze(transformed_anchors)
-                anchorBoxes = anchorBoxes[scores_over_thresh]
-                anchors_nms_idx = nms(anchorBoxes, scores, 0.5)
-
-                finalResult[0].extend(scores[anchors_nms_idx])
-                finalResult[1].extend(torch.tensor([i] * anchors_nms_idx.shape[0]))
-                finalResult[2].extend(anchorBoxes[anchors_nms_idx])
-
-                finalScores = torch.cat((finalScores, scores[anchors_nms_idx]))
-                finalAnchorBoxesIndexesValue = torch.tensor([i] * anchors_nms_idx.shape[0])
-                if torch.cuda.is_available():
-                    finalAnchorBoxesIndexesValue = finalAnchorBoxesIndexesValue.cuda()
-                finalAnchorBoxesIndexes = torch.cat((finalAnchorBoxesIndexes, finalAnchorBoxesIndexesValue))
-                finalAnchorBoxesCoordinates = torch.cat((finalAnchorBoxesCoordinates, anchorBoxes[anchors_nms_idx]))
-            return [finalScores, finalAnchorBoxesIndexes, finalAnchorBoxesCoordinates]
-
+        return regression, classification
 
 class RetinanetModel:
     def __init__(self):
@@ -349,7 +301,6 @@ class RetinanetModel:
         self.args.backbone = backbone
         self.model = ResNet(self.args.num_classes, self.model_config[backbone]["block"], self.model_config[backbone]["layer"])
         self.model.load_state_dict(model_zoo.load_url(self.model_config[backbone]['resnet_url'], model_dir=os.path.join(self.model_dir, backbone)), strict=False)
-        self.model = torch.nn.DataParallel(self.model)
         self.args.exp_name = f"{os.path.join(self.model_dir, backbone)}/{self.exp_name}_{len(os.listdir(os.path.join(self.model_dir, backbone)))}"
         os.makedirs(f"{self.args.exp_name }/", exist_ok=True)
         logger.info(f"Export directory: {self.args.exp_name}")
@@ -378,17 +329,19 @@ class RetinanetModel:
                             f"{os.path.join(self.model_dir, backbone)}/{self.exp_name}_{len(os.listdir(os.path.join(self.model_dir, backbone)))}"
         os.makedirs(f"{self.args.exp_name }/", exist_ok=True)
         logger.info(f"Export directory: {self.args.exp_name}")
-        self.model = torch.nn.DataParallel(self.model)
         return self()
     
     @timetaken
     def run_oneepoch(self, dataloader_train, scaler, epoch):
         epoch_loss = torch.zeros(len(dataloader_train))
         pbar = tqdm(enumerate(dataloader_train), total=len(dataloader_train), desc="Epoch: {0}".format(epoch))
+        self.focalLoss = losses.FocalLoss()
+        self.anchors = Anchors()
         for iteration, data in pbar:
             self.optimizer.zero_grad()
             with torch.cuda.amp.autocast():
-                classification_loss, regression_loss = self.model([data['img'].to(self.args.device).float(), data['annot']])
+                regressions, classifications = self.model(data['img'].to(self.args.device).float())
+                classification_loss, regression_loss = self.focalLoss(classifications, regressions, self.anchors(data['img'].to(self.args.device).float()), data['annot']) 
                 classification_loss, regression_loss = classification_loss.mean(), regression_loss.mean()
                 loss = classification_loss + regression_loss
                 loss = loss * 2
@@ -411,6 +364,7 @@ class RetinanetModel:
         if self.fun_exp_name: self.optimizer.load_state_dict(torch.load(os.path.join(self.args.exp_name, "best.pth"))["optimizer"])
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=3, verbose=True)
         scaler = torch.cuda.amp.GradScaler()
+        self.model = torch.nn.DataParallel(self.model); self.training = True
         for epoch in range(self.args.start_epoch, self.args.total_epoch):
             self.model.train()
             self.model.module.freeze_bn()
@@ -433,18 +387,57 @@ class RetinanetModel:
             }, f"{self.args.exp_name}/last.pth")
             time.sleep(300)
 
-    @timetaken
     @torch.no_grad()
-    def validation(self, dummy_value=None, threshold=0.05):
+    def validation(self, model=None, threshold=0.05):
+        self.model = model if isinstance(model, torch.nn.Module) else self.model
         self.model.eval().to(self.args.device)
-        self.model.module.freeze_bn()
         dataset = CocoDataset(self.args.coco_path, set_name='val2017', transform=transforms.Compose([Normalizer(), Resizer()]))
-        results = []
-        image_ids = []
+        results, image_ids = [], []
+        self.anchors = Anchors()
+        self.regressBoxes = BBoxTransform()
+        self.clipBoxes = ClipBoxes()
         for index in tqdm(range(len(dataset)), desc="Validation "):
+            if index == 500 and not threshold: break
             data = dataset[index]
             scale  = data['scale']
-            scores, labels, boxes = self.model(data['img'].permute(2, 0, 1).to(self.args.device).float().unsqueeze(dim=0))
+            img_batch = data['img'].permute(2, 0, 1).to(self.args.device).float().unsqueeze(dim=0)
+            anchors = self.anchors(img_batch)
+            regression, classification = self.model(img_batch)
+            transformed_anchors = self.regressBoxes(anchors, regression)
+            transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
+
+            finalResult = [[], [], []]
+            finalScores = torch.Tensor([])
+            finalAnchorBoxesIndexes = torch.Tensor([]).long()
+            finalAnchorBoxesCoordinates = torch.Tensor([])
+            if torch.cuda.is_available():
+                finalScores = finalScores.cuda()
+                finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
+                finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
+
+            for i in range(classification.shape[2]):
+                scores = torch.squeeze(classification[:, :, i])
+                scores_over_thresh = (scores > 0.05)
+                if scores_over_thresh.sum() == 0:
+                    # no boxes to NMS, just continue
+                    continue
+
+                scores = scores[scores_over_thresh]
+                anchorBoxes = torch.squeeze(transformed_anchors)
+                anchorBoxes = anchorBoxes[scores_over_thresh]
+                anchors_nms_idx = nms(anchorBoxes, scores, 0.5)
+
+                finalResult[0].extend(scores[anchors_nms_idx])
+                finalResult[1].extend(torch.tensor([i] * anchors_nms_idx.shape[0]))
+                finalResult[2].extend(anchorBoxes[anchors_nms_idx])
+
+                finalScores = torch.cat((finalScores, scores[anchors_nms_idx]))
+                finalAnchorBoxesIndexesValue = torch.tensor([i] * anchors_nms_idx.shape[0])
+                if torch.cuda.is_available():
+                    finalAnchorBoxesIndexesValue = finalAnchorBoxesIndexesValue.cuda()
+                finalAnchorBoxesIndexes = torch.cat((finalAnchorBoxesIndexes, finalAnchorBoxesIndexesValue))
+                finalAnchorBoxesCoordinates = torch.cat((finalAnchorBoxesCoordinates, anchorBoxes[anchors_nms_idx]))
+            scores, labels, boxes = [finalScores, finalAnchorBoxesIndexes, finalAnchorBoxesCoordinates]
             scores, labels, boxes = scores.cpu(), labels.cpu(), boxes.cpu()
             boxes /= scale
             if boxes.shape[0] > 0:
@@ -454,7 +447,7 @@ class RetinanetModel:
                     score = float(scores[box_id])
                     label = int(labels[box_id])
                     box = boxes[box_id, :]
-                    if score < threshold: break
+                    if score < 0.05: break
                     image_result = {
                         'image_id'    : dataset.image_ids[index],
                         'category_id' : dataset.label_to_coco_label(label),
@@ -482,23 +475,24 @@ class RetinanetModel:
         self.model.eval()
         torch.onnx.export(self.model, dummy_input, file_path, opset_version=12)
 
-    @timetaken
+    # @timetaken
     def quantize(self, dummy_input: torch.nn.Module):
         from aimet_torch.model_preparer import prepare_model
         from aimet_common.defs import QuantScheme
         from aimet_torch.quantsim import QuantizationSimModel
         device = dummy_input.device
-        dummy_input = torch.randn(dummy_input)
-        model = prepare_model(self.model)
+        # dummy_input = torch.randn(dummy_input)
+        model = prepare_model(self.model).to(device)
         download_file(
-            "https://raw.githubusercontent.com/quic/aimet/develop/TrainingExtensions/common/src/python/aimet_common/quantsim_config/default_config_per_channel.json"
-            "pcq_config.json", os.path.join(self.model_dir, self.backbone)
+            "https://raw.githubusercontent.com/quic/aimet/develop/TrainingExtensions/common/src/python/aimet_common/quantsim_config/default_config_per_channel.json",
+            "pcq_config.json", os.path.join(self.model_dir, self.args.backbone)
         )
         quant_sim = QuantizationSimModel(model, dummy_input=dummy_input,
-                                        quant_scheme=QuantScheme.post_training_tf,
+                                        quant_scheme=QuantScheme.post_training_tf_enhanced,
                                         default_param_bw=8, default_output_bw=8,
-                                        config_file=os.path.join(self.model_dir, self.backbone, "pcq_config.json"))
-        quant_sim.compute_encodings(self.validation, forward_pass_callback_args=None)
+                                        config_file=os.path.join(self.model_dir, self.args.backbone, "pcq_config.json"))
+        quant_sim.compute_encodings(self.validation, forward_pass_callback_args=(None))
+        self.validation(quant_sim.model)
         os.makedirs(os.path.join(self.args.exp_name, "quant"), exist_ok=True)
         quant_sim.model.cpu()
         quant_sim.export(path=os.path.join(self.args.exp_name, "quant"), filename_prefix=f'quantized_{self.args.backbone}', dummy_input=dummy_input.cpu())

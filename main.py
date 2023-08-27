@@ -35,7 +35,7 @@ def main(args):
         MACG(task.model,  (3, 640, 640))
     if "val" in args: task.validation()
     if "train" in args: task.train()
-    if "quant" in args: task.quantize()
+    if "quant" in args: task.quantize(img)
     if "export" in args: task.export(img)
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ weights/
 .vscode/
 logs/
 research/
-docs/ 
+docs/
 
 *.pyc
 *.pt

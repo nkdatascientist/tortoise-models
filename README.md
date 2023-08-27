@@ -15,10 +15,10 @@
 Install the necessercy packages by running the below command respectively and basic requirements, [**Python>=3.8.0**](https://www.python.org/) environment.
 
 ```sh
-conda create --prefix env python=3.8
+conda create -y  --prefix env python=3.8
 
 # Installing Requirements
-curl -o tortoise_requirements.sh https://raw.githubusercontent.com/nkdatascientist/tortoise-models/main/data/scripts/aimet.sh && chmod +x tortoise_requirements.sh && sudo ./tortoise_requirements.sh env $(pwd)/ torch
+curl -o tortoise_requirements.sh https://raw.githubusercontent.com/nkdatascientist/tortoise-models/main/data/scripts/requirements.sh && chmod +x tortoise_requirements.sh && sudo ./tortoise_requirements.sh env $(pwd)/ torch
 ```
 </details>
 
@@ -26,13 +26,11 @@ curl -o tortoise_requirements.sh https://raw.githubusercontent.com/nkdatascienti
   - [Classification](https://github.com/nkdatascientist/tortoise-models/tree/main/docs/models/classification)
   - [Detection](https://github.com/nkdatascientist/tortoise-models/tree/main/docs/models/detection) -->
 
-
-
 ### Pretrained Checkpoints
 
-| Model                                                                                           | size<br><sup>(pixels) | mAP<sup>val<br>50-95 | mAP<sup>val<br>50 |  params<br><sup>(M) | GMac<br><sup>@640 (B) |
-| ----------------------------------------------------------------------------------------------- | --------------------- | -------------------- | ----------------- | ------------------- | ---------------------- |
-| [Retinanet18]()          | 640                   | 21.6                 | 37.0              | **21.4**             |          **75.45 GMac**       |
+| Model                                                                                           | size<br><sup>(pixels) | FP32<br>mAP<sup>val<br>50-95 | Int8<br>mAP<sup>val<br>50-95  |  
+| ----------------------------------------------------------------------------------------------- | --------------------- | ---------------------------- | ----------------------------- |  
+| [Retinanet18]()                                                                                 | 640x640               | 21.6                         | 37.0                          |
 <!-- | [Retinanet34](https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt)          | dynamic               | 23.7               | 45.7              | **1.9**             |          **4.5**       | -->
 <!-- | [Retinanet50](https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt)          | 640                   | 28.0                 | 45.7              | **1.9**             |          **4.5**       | -->
 <!-- | [Retinanet101](https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt)         | 640                   | 28.0                 | 45.7              | **1.9**             |          **4.5**       | -->
