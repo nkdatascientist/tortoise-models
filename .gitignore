@@ -3,7 +3,10 @@ __pycache__/
 weights/
 .vscode/
 logs/
+research/
+docs/ 
 
 *.pyc
 *.pt
 *.pth
+*.log

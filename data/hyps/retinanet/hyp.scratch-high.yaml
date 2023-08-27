@@ -1,0 +1,7 @@
+num_classes: 80
+coco_path: "/home/nk/Downloads/Dataset/coco/"
+train_batchsize: 8
+start_epoch: 1
+total_epoch: 5
+lr: 0.000001
+weight_decay: 0.00001
