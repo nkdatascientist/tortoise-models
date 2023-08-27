@@ -51,7 +51,9 @@ if [ $3 = "torch" ]; then
     $Python -m pip install tqdm \
                             pyyaml  \
                             pycocotools \
-                            loguru
+                            loguru \
+                            torchinfo \
+                            ptflops
     $Python -m pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
     $Python -m pip install https://github.com/quic/aimet/releases/download/1.27.0/AimetTorch-torch_gpu_1.27.0-cp38-cp38-linux_x86_64.whl
     $Python -m pip install https://github.com/quic/aimet/releases/download/1.27.0/AimetCommon-torch_gpu_1.27.0-cp38-cp38-linux_x86_64.whl

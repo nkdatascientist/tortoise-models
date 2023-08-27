@@ -2,6 +2,7 @@
 import requests, os, time
 from loguru import logger
 from tqdm import tqdm  # Import the tqdm library for progress bar
+from ptflops import get_model_complexity_info
 
 def download_file(url, filename, dest_folder):
     response = requests.get(url, stream=True)
@@ -73,3 +74,10 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+
+def MACG(model, input):
+    macs, params = get_model_complexity_info(model, input, as_strings=True, print_per_layer_stat=True, verbose=True)
+    print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+    print('{:<30}  {:<8}'.format('Number of parameters: ', params))

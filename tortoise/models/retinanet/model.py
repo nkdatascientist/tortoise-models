@@ -336,7 +336,7 @@ class RetinanetModel:
     
     def get_info(self, backbone): return self.model_config[backbone]["retinanet_url"]
     @classmethod
-    def from_scratch(self, backbone, model_dir=None):
+    def from_scratch(self, backbone, model_dir=None, device="cuda"):
         self.__init__(self)
         if model_dir: self.model_dir = model_dir   
         if backbone not in self.model_config.keys(): 
@@ -344,6 +344,7 @@ class RetinanetModel:
             assert False, "backbone Not found" 
         
         self.args = self.load_config(backbone, "config.yaml", os.path.join(self.model_dir, backbone))
+        self.args.device = device
         os.makedirs(os.path.join(self.model_dir, backbone), exist_ok=True)
         self.args.backbone = backbone
         self.model = ResNet(self.args.num_classes, self.model_config[backbone]["block"], self.model_config[backbone]["layer"])
@@ -355,7 +356,7 @@ class RetinanetModel:
         return self()
     
     @classmethod
-    def from_pretrained(self, backbone, model_dir=None, exp_name=None, filename="best.pth"):
+    def from_pretrained(self, backbone, model_dir=None, exp_name=None, filename="best.pth",  device="cuda"):
         self.__init__(self)
         if model_dir: self.model_dir = model_dir   
         if backbone not in self.model_config.keys(): 
@@ -363,6 +364,7 @@ class RetinanetModel:
             assert False, "backbone Not found"
 
         self.args = self.load_config(backbone, "config.yaml", os.path.join(self.model_dir, backbone))
+        self.args.device = device
         os.makedirs(os.path.join(self.model_dir, backbone), exist_ok=True)
         self.args.backbone = backbone
         self.fun_exp_name = exp_name
